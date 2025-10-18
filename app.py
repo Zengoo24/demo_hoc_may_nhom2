@@ -8,6 +8,8 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode, RT
 import joblib
 from collections import deque
 from PIL import Image
+# 🛑 LỖI ĐÃ KHẮC PHỤC: Thêm import time 🛑
+import time 
 
 # Thêm khai báo mp_drawing và mp_hands
 mp_drawing = mp.solutions.drawing_utils
@@ -254,12 +256,10 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     return cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB), predicted_class.upper()
 
 # ======================================================================
-# ======================================================================
 # VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR)
 # ======================================================================
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
-        # Khởi tạo các tham số mô hình
         self.W = W; self.b = b; self.mean = mean; self.std = std; self.id2label = id2label
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -267,11 +267,11 @@ class DrowsinessProcessor(VideoProcessorBase):
         self.last_pred_label = "CHO DU LIEU VAO"
         self.N_FEATURES = N_FEATURES
         
-        # 🛑 ĐẢM BẢO KHỞI TẠO self.pTime và self.fps 🛑
         self.last_ear_avg = 0.4 
         self.last_pitch = 0.0
-        self.pTime = time.time()  # Khởi tạo thời gian trước đó
-        self.fps = 0              # Khởi tạo FPS
+        # 🛑 ĐÃ KHẮC PHỤC LỖI NAMERROR 🛑
+        self.pTime = time.time() 
+        self.fps = 0
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
@@ -285,7 +285,7 @@ class DrowsinessProcessor(VideoProcessorBase):
         
         delta_ear_value_display = 0.0
         delta_pitch_value_display = 0.0
-        ear_avg_display = 0.0
+        ear_avg = 0.0
         
         predicted_label_frame = "NO FACE" 
 
@@ -295,7 +295,6 @@ class DrowsinessProcessor(VideoProcessorBase):
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
             ear_avg = (ear_l + ear_r) / 2.0
-            ear_avg_display = ear_avg 
 
             mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
@@ -333,12 +332,11 @@ class DrowsinessProcessor(VideoProcessorBase):
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
         else:
             self.last_pred_label = "NO FACE"
-            
-        # 🛑 Tính FPS 🛑
+
+        # Tính FPS
         cTime = time.time()
-        # Sử dụng 0.9 và 0.1 cho làm mượt FPS (Exponential Moving Average)
         self.fps = 0.9 * self.fps + 0.1 * (1 / (cTime - self.pTime + EPS))
-        self.pTime = cTime # Cập nhật thời gian trước đó
+        self.pTime = cTime
 
         # Vẽ lên khung hình GỐC (frame_resized)
         frame_display_bgr = frame_resized
