@@ -7,7 +7,6 @@ import cv2
 import mediapipe as mp
 import time
 from collections import deque
-# Đã sửa lỗi: Thay webrtc_stream bằng webrtc_streamer
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 
 # ==============================
@@ -45,7 +44,6 @@ def load_resources():
             )
             sys.exit()
 
-        # Khởi tạo MediaPipe FaceMesh
         mp_face_mesh = mp.solutions.face_mesh
         face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -80,7 +78,6 @@ def predict_proba(x, W, b):
     z = np.dot(x, W) + b
     return softmax(z)
 
-# Chỉ số landmarks cho tính toán EAR, MAR, Head Pose
 EYE_LEFT_IDX = np.array([33, 159, 145, 133, 153, 144])
 EYE_RIGHT_IDX = np.array([362, 386, 374, 263, 380, 385])
 MOUTH_IDX = np.array([61, 291, 0, 17, 78, 308])
@@ -136,7 +133,6 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.idx2label = idx2label
         self.BLINK_THRESHOLD = blink_thresh
         
-        # State variables
         self.pTime = time.time()
         self.fps = 0
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
@@ -144,7 +140,6 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.last_pitch = 0.0  
         self.face_mesh = face_mesh_model
 
-        # Khởi tạo metadata trong session state
         if 'dms_metadata' not in st.session_state:
             st.session_state['dms_metadata'] = {}
 
@@ -186,7 +181,6 @@ class DmsVideoTransformer(VideoTransformerBase):
             if ear_avg < self.BLINK_THRESHOLD:
                 current_pred_label = "blink"
             else:
-                # Dùng Softmax cho các hành vi khác
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                 angle_pitch_extra, delta_ear_value, forehead_y, delta_pitch_value], dtype=np.float32)
 
@@ -210,7 +204,6 @@ class DmsVideoTransformer(VideoTransformerBase):
             }
 
         else:
-            # Mất mặt: reset lịch sử
             self.last_ear_avg = 0.4
             self.last_pitch = 0.0
             self.pred_queue.clear()
@@ -249,14 +242,12 @@ st.set_page_config(
 st.title("📹 DMS: Softmax Model Camera Test (WebRTC)")
 st.markdown("---")
 
-# Dictionary mô tả 10 đặc trưng
 FEATURE_DESC = {
     0: "EAR_L", 1: "EAR_R", 2: "MAR", 3: "YAW", 4: "PITCH", 
     5: "ROLL", 6: "ANGLE_PITCH_EXTRA", 7: "DELTA_EAR", 
     8: "FOREHEAD_Y", 9: "DELTA_PITCH",
 }
 
-# --- SIDEBAR: CẤU HÌNH ---
 with st.sidebar:
     st.header("⚙️ Cấu hình")
     st.subheader("Tham số Heuristic")
@@ -269,20 +260,25 @@ with st.sidebar:
     st.write("---")
     st.markdown("⚠️ **Lưu ý:** Ứng dụng cần quyền truy cập camera.")
 
-# --- MAIN CONTENT: CAMERA VÀ DATA DISPLAY ---
-
 col_cam, col_data = st.columns([2, 1])
 
 with col_cam:
     st.subheader("Camera Trực tiếp & Phân tích")
     
-    # Sử dụng webrtc_streamer (đã sửa lỗi)
+    # BỘ ICE SERVERS MỞ RỘNG (ĐÃ SỬA)
+    ICE_SERVERS = [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun1.l.google.com:19302"]},
+        {"urls": ["stun:stun2.l.google.com:19302"]},
+        {"urls": ["stun:stun.services.mozilla.com"]},
+        # Thêm một TURN server công khai (dễ bị quá tải)
+        {"urls": ["turn:numb.viagenie.ca:3478"], "username": "webrtc@live.com", "credential": "muazkh"} 
+    ]
+    
     webrtc_ctx = webrtc_streamer(
         key="dms-webcam",
         mode=WebRtcMode.SENDRECV,
-        rtc_configuration=RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]} # Sử dụng STUN công khai
-        ),
+        rtc_configuration=RTCConfiguration({"iceServers": ICE_SERVERS}), 
         video_processor_factory=lambda: DmsVideoTransformer(W, b, X_mean, X_std, idx2label, thresh, FACE_MESH),
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
@@ -299,7 +295,6 @@ with col_data:
             metadata = st.session_state.get('dms_metadata', {})
 
             if metadata and metadata['final_label'] != 'No Face':
-                # 1. Hiển thị Trạng thái
                 final_label = metadata.get('final_label', 'UNKNOWN')
                 color_map = {"blink": "red", "nod": "darkorange", "yawn": "blue", "smile": "green", "unknown": "gray", "no face": "gray"}
                 
@@ -310,7 +305,6 @@ with col_data:
                 """
                 status_placeholder.markdown(status_html, unsafe_allow_html=True)
                 
-                # 2. Hiển thị 10 Đặc trưng
                 feats = metadata.get('feats', [0.0]*N_FEATURES)
                 feature_names = [FEATURE_DESC[i] for i in range(N_FEATURES)]
                 
