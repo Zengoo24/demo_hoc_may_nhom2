@@ -7,8 +7,6 @@ import av
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode, RTCConfiguration
 import joblib
 from collections import deque
-import os
-import warnings
 from PIL import Image
 
 # Thêm khai báo mp_drawing và mp_hands
@@ -55,8 +53,8 @@ def softmax_wheel(z):
 
 @st.cache_resource
 def get_mp_hands_instance():
-    """Tạo instance MediaPipe Hands."""
-    return mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
+    """Tạo instance MediaPipe Hands (cho xử lý ảnh tĩnh Vô lăng)."""
+    return mp.solutions.hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.5)
 
 @st.cache_resource
 def load_assets():
@@ -91,9 +89,8 @@ def load_assets():
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
 
-        # --- 3. Khởi tạo Face Mesh (Live) ---
+        # --- 3. Khởi tạo Face Mesh (Global Reference) ---
         mp_face_mesh = mp.solutions.face_mesh
-        # Không cần mesh_static nữa
         
         return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
 
@@ -105,9 +102,7 @@ def load_assets():
         st.stop()
 
 # Tải tài sản (Chạy một lần)
-# Đã loại bỏ mesh_static khỏi kết quả trả về
 W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL = load_assets()
-classes = list(id2label.values())
 mp_face_mesh = mp.solutions.face_mesh # Global reference
 
 # ======================================================================
@@ -198,7 +193,7 @@ def extract_wheel_features(image, hands_processor, wheel):
 
         feats_all.extend(feats)
 
-    feats_len_per_hand = 64 # 21 * 3 + 1
+    feats_len_per_hand = 64
     expected_len = feats_len_per_hand * 2
     feats_all = feats_all[:expected_len]
     if len(feats_all) < expected_len:
@@ -209,8 +204,6 @@ def extract_wheel_features(image, hands_processor, wheel):
 # ======================================================================
 # V. HÀM XỬ LÝ ẢNH TĨNH (WHEEL)
 # ======================================================================
-
-# Đã loại bỏ process_static_image (Face Mesh)
 
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL):
     img_pil = Image.open(image_file).convert('RGB')
@@ -261,7 +254,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     return cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB), predicted_class.upper()
 
 # ======================================================================
-# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR)
+# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR) - ĐÃ TỐI GIẢN HIỂN THỊ
 # ======================================================================
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
@@ -272,12 +265,14 @@ class DrowsinessProcessor(VideoProcessorBase):
         self.last_pred_label = "CHO DU LIEU VAO"
         self.N_FEATURES = N_FEATURES
         
+        # Biến trạng thái để tính delta (vẫn cần thiết cho tính toán mô hình)
         self.last_ear_avg = 0.4 
         self.last_pitch = 0.0
+        self.pTime = time.time()
+        self.fps = 0
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
-
         frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
@@ -286,9 +281,10 @@ class DrowsinessProcessor(VideoProcessorBase):
 
         results = self.face_mesh.process(rgb_unflipped)
         
-        delta_ear_value_display = 0.0
-        delta_pitch_value_display = 0.0
-        ear_avg_display = 0.0
+        # Vẫn tính toán các giá trị delta để truyền vào mô hình
+        ear_avg = 0.0
+        delta_ear_value = 0.0
+        delta_pitch_value = 0.0
         
         predicted_label_frame = "NO FACE" 
 
@@ -298,15 +294,14 @@ class DrowsinessProcessor(VideoProcessorBase):
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
             ear_avg = (ear_l + ear_r) / 2.0
-            ear_avg_display = ear_avg 
 
             mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y = get_extra_features(landmarks)
 
-            # Tính toán delta EAR và Pitch
-            delta_ear_value_display = ear_avg - self.last_ear_avg
-            delta_pitch_value_display = pitch - self.last_pitch
+            # Tính toán delta
+            delta_ear_value = ear_avg - self.last_ear_avg
+            delta_pitch_value = pitch - self.last_pitch
 
             # Cập nhật giá trị last_ sau khi tính delta
             self.last_ear_avg = ear_avg
@@ -315,9 +310,9 @@ class DrowsinessProcessor(VideoProcessorBase):
             if ear_avg < BLINK_THRESHOLD:
                 predicted_label_frame = "blink"
             else:
-                # 10 đặc trưng động
+                # 10 đặc trưng
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
-                                  angle_pitch_extra, delta_ear_value_display, forehead_y, delta_pitch_value_display], dtype=np.float32)
+                                  angle_pitch_extra, delta_ear_value, forehead_y, delta_pitch_value], dtype=np.float32)
 
                 feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
@@ -336,14 +331,18 @@ class DrowsinessProcessor(VideoProcessorBase):
             self.last_pred_label = max(set(self.pred_queue), key=self.pred_queue.count)
         else:
             self.last_pred_label = "NO FACE"
+            
+        # Tính FPS
+        cTime = time.time()
+        self.fps = 0.9 * self.fps + 0.1 * (1 / (cTime - self.pTime + EPS))
+        self.pTime = cTime
 
         # Vẽ lên khung hình GỐC (frame_resized)
         frame_display_bgr = frame_resized
 
-        cv2.putText(frame_display_bgr, f"Trang thai: {self.last_pred_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
-        cv2.putText(frame_display_bgr, f"EAR Avg: {ear_avg_display:.3f}", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-        cv2.putText(frame_display_bgr, f"Delta EAR: {delta_ear_value_display:.3f}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame_display_bgr, f"Delta Pitch: {delta_pitch_value_display:.3f}", (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        # 🛑 CHỈ HIỂN THỊ TRẠNG THÁI VÀ FPS
+        cv2.putText(frame_display_bgr, f"FPS: {int(self.fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame_display_bgr, f"State: {self.last_pred_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
 
         return av.VideoFrame.from_ndarray(frame_display_bgr, format="bgr24")
 
