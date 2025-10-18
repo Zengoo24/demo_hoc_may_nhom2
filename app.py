@@ -91,11 +91,11 @@ def load_assets():
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
 
-        # --- 3. Khởi tạo Face Mesh (Static) ---
+        # --- 3. Khởi tạo Face Mesh (Live) ---
         mp_face_mesh = mp.solutions.face_mesh
-        mesh_static = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
-
-        return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, mesh_static
+        # Không cần mesh_static nữa
+        
+        return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL
 
     except FileNotFoundError as e:
         st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
@@ -105,7 +105,8 @@ def load_assets():
         st.stop()
 
 # Tải tài sản (Chạy một lần)
-W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, mesh_static = load_assets()
+# Đã loại bỏ mesh_static khỏi kết quả trả về
+W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL = load_assets()
 classes = list(id2label.values())
 mp_face_mesh = mp.solutions.face_mesh # Global reference
 
@@ -206,71 +207,11 @@ def extract_wheel_features(image, hands_processor, wheel):
     return np.array(feats_all, dtype=np.float32)
 
 # ======================================================================
-# V. HÀM XỬ LÝ ẢNH TĨNH VÀ LIVE (Drowsiness)
+# V. HÀM XỬ LÝ ẢNH TĨNH (WHEEL)
 # ======================================================================
 
-def process_static_image(image_file, mesh, W, b, mean, std, id2label):
-    image = np.array(Image.open(image_file).convert('RGB'))
-    image_resized = cv2.resize(image, (NEW_WIDTH, NEW_HEIGHT))
-    h, w = image_resized.shape[:2]
-    
-    # Lật ảnh để MediaPipe xử lý (luôn lật trong MediaPipe)
-    image_for_mp = cv2.flip(image_resized, 1) 
-    
-    results = mesh.process(image_for_mp)
-    result_label = "Chưa tìm thấy khuôn mặt"
-    
-    # Bắt đầu với ảnh đã resized và LẬT
-    image_display_bgr = cv2.cvtColor(image_for_mp, cv2.COLOR_RGB2BGR) 
+# Đã loại bỏ process_static_image (Face Mesh)
 
-    if results.multi_face_landmarks:
-        landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
-
-        ear_l = eye_aspect_ratio(landmarks, True)
-        ear_r = eye_aspect_ratio(landmarks, False)
-        ear_avg = (ear_l + ear_r) / 2.0
-        mar = mouth_aspect_ratio(landmarks)
-        yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
-        angle_pitch_extra, forehead_y = get_extra_features(landmarks)
-
-        # ĐẶC TRƯNG ĐỘNG (Phải đặt bằng 0 cho ảnh tĩnh)
-        delta_ear_value = 0.0 
-        delta_pitch_value = 0.0 
-
-        if ear_avg < BLINK_THRESHOLD:
-            result_label = "BLINK (Heuristic)"
-        else:
-            # TẠO MẢNG 10 ĐẶC TRƯNG
-            # [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, DELTA_PITCH]
-            feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
-                              angle_pitch_extra, delta_ear_value, forehead_y, delta_pitch_value], dtype=np.float32)
-
-            # CHUẨN HÓA VÀ DỰ ĐOÁN
-            feats_scaled = (feats - mean[:N_FEATURES]) / (std[:N_FEATURES] + EPS)
-            
-            # Dự đoán Softmax
-            pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), W, b)[0]
-            result_label = id2label.get(pred_idx, "UNKNOWN")
-
-        cv2.putText(image_display_bgr, f"Trang thai: {result_label.upper()}", (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
-
-        # Lật ngược lại để hiển thị đúng cho người dùng
-        final_image_bgr = cv2.flip(image_display_bgr, 1) 
-        final_image_rgb = cv2.cvtColor(final_image_bgr, cv2.COLOR_BGR2RGB)
-        return final_image_rgb, result_label
-
-    cv2.putText(image_display_bgr, "KHONG TIM THAY KHUON MAT", (10, h // 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    
-    # Lật ngược lại để hiển thị đúng cho người dùng
-    final_image_bgr = cv2.flip(image_display_bgr, 1)
-    final_image_rgb = cv2.cvtColor(final_image_bgr, cv2.COLOR_BGR2RGB)
-    return final_image_rgb, result_label
-
-# ----------------------------------------------------------------------
-## VI. HÀM XỬ LÝ ẢNH TĨNH (Wheel)
-# ----------------------------------------------------------------------
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL):
     img_pil = Image.open(image_file).convert('RGB')
     img_np = np.array(img_pil)
@@ -331,7 +272,6 @@ class DrowsinessProcessor(VideoProcessorBase):
         self.last_pred_label = "CHO DU LIEU VAO"
         self.N_FEATURES = N_FEATURES
         
-        # Thêm các biến trạng thái để tính delta EAR và Pitch
         self.last_ear_avg = 0.4 
         self.last_pitch = 0.0
 
@@ -341,7 +281,7 @@ class DrowsinessProcessor(VideoProcessorBase):
         frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
-        # 🛑 KHÔNG LẬT: Xử lý trực tiếp trên ảnh RGB không lật (khắc phục lỗi lật màn hình)
+        # KHÔNG LẬT (Khắc phục lỗi lật màn hình)
         rgb_unflipped = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
         results = self.face_mesh.process(rgb_unflipped)
@@ -375,7 +315,7 @@ class DrowsinessProcessor(VideoProcessorBase):
             if ear_avg < BLINK_THRESHOLD:
                 predicted_label_frame = "blink"
             else:
-                # 10 đặc trưng
+                # 10 đặc trưng động
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                   angle_pitch_extra, delta_ear_value_display, forehead_y, delta_pitch_value_display], dtype=np.float32)
 
@@ -413,7 +353,8 @@ class DrowsinessProcessor(VideoProcessorBase):
 st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
 st.title("🧠 Ứng dụng Hybrid Nhận diện Trạng thái Lái xe")
 
-tab1, tab2, tab3 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh (Khuôn Mặt)", "🚗 Kiểm tra Vô Lăng (Tay)"])
+# Chỉ tạo 2 tab: Live Camera và Vô Lăng
+tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng (Tay)"])
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
@@ -444,32 +385,14 @@ with tab1:
         )
 
 with tab2:
-    st.header("2. Dự đoán Ảnh Tĩnh (Khuôn Mặt)")
-    st.markdown("### Tải lên ảnh khuôn mặt để dự đoán trạng thái (Ngủ gật/Mất tập trung)")
-    uploaded_file = st.file_uploader("Chọn một ảnh khuôn mặt (.jpg, .png)", type=["jpg", "png", "jpeg"], key="face_upload")
-
-    if uploaded_file is not None:
-        st.info("Đang xử lý ảnh... ")
-        result_img_rgb, predicted_label = process_static_image(uploaded_file, mesh_static, W, b, mean, std, id2label)
-        st.markdown("---")
-        col_img, col_res = st.columns([2, 1])
-        with col_img:
-            st.image(result_img_rgb, caption="Ảnh đã xử lý", use_container_width=True)
-        with col_res:
-            st.success("✅ Dự đoán Hoàn tất")
-            st.metric(label="Trạng thái Dự đoán", value=predicted_label.upper())
-            st.caption("Lưu ý: Delta EAR và Pitch cho ảnh tĩnh luôn bằng 0.")
-    else:
-        st.info("Vui lòng tải lên một ảnh để bắt đầu dự đoán.")
-
-with tab3:
-    st.header("3. Kiểm tra Vị trí Tay (Vô Lăng)")
+    st.header("2. Kiểm tra Vị trí Tay (Vô Lăng)")
     st.warning(f"Mô hình Vô Lăng nhận diện: {CLASS_NAMES_WHEEL}")
     st.markdown("### Tải lên ảnh tay trên/rời vô lăng để dự đoán")
     uploaded_wheel_file = st.file_uploader("Chọn một ảnh vô lăng (.jpg, .png)", type=["jpg", "png", "jpeg"], key="wheel_upload")
 
     if uploaded_wheel_file is not None:
         st.info("Đang xử lý ảnh...")
+        # Sử dụng hàm xử lý ảnh tĩnh cho vô lăng
         result_img_rgb, predicted_label = process_static_wheel_image(uploaded_wheel_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL)
         st.markdown("---")
         col_img, col_res = st.columns([2, 1])
