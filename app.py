@@ -7,7 +7,7 @@ import cv2
 import mediapipe as mp
 import time
 from collections import deque
-# Đã sửa lỗi: Thay thế webrtc_stream bằng webrtc_streamer
+# Đã sửa lỗi: Thay webrtc_stream bằng webrtc_streamer
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 
 # ==============================
@@ -20,11 +20,6 @@ BLINK_THRESHOLD = 0.20
 EPS = 1e-8
 FPS_SMOOTH = 0.9
 N_FEATURES = 10
-
-# MediaPipe Setup
-mp_face_mesh = mp.solutions.face_mesh
-# Khởi tạo FaceMesh trong hàm load_resources hoặc lớp VideoTransformer
-# để tránh vấn đề threading, nhưng ở đây ta dùng cache_resource cho đối tượng MediaPipe
 
 # ==============================
 # LOAD MODEL VÀ SCALER
@@ -51,6 +46,7 @@ def load_resources():
             sys.exit()
 
         # Khởi tạo MediaPipe FaceMesh
+        mp_face_mesh = mp.solutions.face_mesh
         face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,
             refine_landmarks=True,
@@ -71,7 +67,7 @@ def load_resources():
 W, b, CLASSES, X_mean, X_std, idx2label, FACE_MESH = load_resources()
 
 # ==============================
-# HÀM DỰ ĐOÁN (Giữ nguyên)
+# HÀM DỰ ĐOÁN & TÍNH ĐẶC TRƯNG
 # ==============================
 def softmax(z):
     z = z - np.max(z)
@@ -84,10 +80,7 @@ def predict_proba(x, W, b):
     z = np.dot(x, W) + b
     return softmax(z)
 
-
-# ==============================
-# HÀM TÍNH ĐẶC TRƯNG (Giữ nguyên)
-# ==============================
+# Chỉ số landmarks cho tính toán EAR, MAR, Head Pose
 EYE_LEFT_IDX = np.array([33, 159, 145, 133, 153, 144])
 EYE_RIGHT_IDX = np.array([362, 386, 374, 263, 380, 385])
 MOUTH_IDX = np.array([61, 291, 0, 17, 78, 308])
@@ -149,21 +142,18 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_ear_avg = 0.4  
         self.last_pitch = 0.0  
-        self.face_mesh = face_mesh_model # Sử dụng đối tượng MediaPipe đã khởi tạo
+        self.face_mesh = face_mesh_model
 
         # Khởi tạo metadata trong session state
         if 'dms_metadata' not in st.session_state:
             st.session_state['dms_metadata'] = {}
 
     def transform(self, frame):
-        # Chuyển đổi từ PIL Image (định dạng của streamlit-webrtc) sang numpy array (OpenCV)
         img = frame.to_ndarray(format="bgr24")
         h, w = img.shape[:2]
-        # Lật ngang khung hình để tạo hiệu ứng gương (giống code gốc)
         img = cv2.flip(img, 1) 
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # Xử lý Face Mesh
         results = self.face_mesh.process(rgb)
 
         final_label = "No Face"
@@ -191,7 +181,7 @@ class DmsVideoTransformer(VideoTransformerBase):
             self.last_pitch = pitch
             
             # 4. ÁP DỤNG LUẬT CỨNG (HEURISTIC) CHO BLINK
-            current_pred_label = "unknown" # Đặt giá trị mặc định trước
+            current_pred_label = "unknown"
             
             if ear_avg < self.BLINK_THRESHOLD:
                 current_pred_label = "blink"
@@ -210,7 +200,7 @@ class DmsVideoTransformer(VideoTransformerBase):
             self.pred_queue.append(current_pred_label)
             final_label = max(set(self.pred_queue), key=self.pred_queue.count)
             
-            # Cập nhật metadata trong session state
+            # Cập nhật metadata
             st.session_state['dms_metadata'] = {
                 'final_label': final_label,
                 'ear_avg': ear_avg,
@@ -233,11 +223,11 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.pTime = cTime
         
         # HIỂN THỊ TRÊN KHUNG HÌNH
-        color = (0, 255, 0) # Green
+        color = (0, 255, 0) 
         if final_label.lower() == "blink":
-            color = (0, 0, 255) # Red
+            color = (0, 0, 255) 
         elif final_label.lower() == "nod":
-            color = (0, 255, 255) # Yellow
+            color = (0, 255, 255) 
             
         cv2.putText(img, f"FPS: {int(self.fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(img, f"State: {final_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
@@ -270,7 +260,6 @@ FEATURE_DESC = {
 with st.sidebar:
     st.header("⚙️ Cấu hình")
     st.subheader("Tham số Heuristic")
-    # Slider để người dùng điều chỉnh BLINK_THRESHOLD
     thresh = st.slider("BLINK_THRESHOLD", 0.05, 0.40, BLINK_THRESHOLD, 0.01)
 
     st.subheader("Trạng thái Mô hình")
@@ -287,15 +276,13 @@ col_cam, col_data = st.columns([2, 1])
 with col_cam:
     st.subheader("Camera Trực tiếp & Phân tích")
     
-    # Khởi tạo WebRTC Stream
-    # ĐÃ SỬA LỖI: Thay webrtc_stream bằng webrtc_streamer
+    # Sử dụng webrtc_streamer (đã sửa lỗi)
     webrtc_ctx = webrtc_streamer(
         key="dms-webcam",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]} # Sử dụng STUN công khai
         ),
-        # Truyền các tham số cần thiết vào lớp VideoTransformer
         video_processor_factory=lambda: DmsVideoTransformer(W, b, X_mean, X_std, idx2label, thresh, FACE_MESH),
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
@@ -304,17 +291,15 @@ with col_cam:
 with col_data:
     st.subheader("Kết quả Phân tích (Cập nhật)")
     
-    # Tạo placeholder để cập nhật dữ liệu liên tục
     status_placeholder = st.empty()
     feature_placeholder = st.empty()
 
-    # Chỉ chạy vòng lặp cập nhật UI nếu WebRTC đang hoạt động
     if webrtc_ctx.state.playing:
         while webrtc_ctx.state.playing:
             metadata = st.session_state.get('dms_metadata', {})
 
             if metadata and metadata['final_label'] != 'No Face':
-                # 1. Hiển thị Trạng thái (Phán đoán cuối cùng)
+                # 1. Hiển thị Trạng thái
                 final_label = metadata.get('final_label', 'UNKNOWN')
                 color_map = {"blink": "red", "nod": "darkorange", "yawn": "blue", "smile": "green", "unknown": "gray", "no face": "gray"}
                 
@@ -339,6 +324,6 @@ with col_data:
                 status_placeholder.warning("🔴 Đang chờ khuôn mặt hoặc camera chưa bật. Nhấn START.")
                 feature_placeholder.empty()
 
-            time.sleep(0.1) # Cập nhật UI 10 lần/giây
+            time.sleep(0.1)
     else:
         st.info("Nhấn 'START' để bắt đầu camera và phân tích. Vui lòng cấp quyền truy cập camera.")
