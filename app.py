@@ -7,10 +7,11 @@ import cv2
 import mediapipe as mp
 import time
 from collections import deque
-from streamlit_webrtc import webrtc_stream, VideoTransformerBase, WebRtcMode, RTCConfiguration
+# Đã sửa lỗi: Thay thế webrtc_stream bằng webrtc_streamer
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 
 # ==============================
-# CẤU HÌNH (Sử dụng lại từ code gốc)
+# CẤU HÌNH
 # ==============================
 MODEL_PATH = "softmax_model_best1.pkl"
 SCALER_PATH = "scale1.pkl"
@@ -22,19 +23,15 @@ N_FEATURES = 10
 
 # MediaPipe Setup
 mp_face_mesh = mp.solutions.face_mesh
-FACE_MESH = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+# Khởi tạo FaceMesh trong hàm load_resources hoặc lớp VideoTransformer
+# để tránh vấn đề threading, nhưng ở đây ta dùng cache_resource cho đối tượng MediaPipe
 
 # ==============================
 # LOAD MODEL VÀ SCALER
 # ==============================
 @st.cache_resource
 def load_resources():
-    """Tải model và scaler, dùng st.cache_resource để chỉ tải 1 lần."""
+    """Tải model, scaler, và khởi tạo MediaPipe FaceMesh một lần."""
     try:
         model_data = joblib.load(MODEL_PATH)
         W = model_data["W"]
@@ -53,7 +50,15 @@ def load_resources():
             )
             sys.exit()
 
-        return W, b, CLASSES, X_mean, X_std, idx2label
+        # Khởi tạo MediaPipe FaceMesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+        return W, b, CLASSES, X_mean, X_std, idx2label, face_mesh
 
     except FileNotFoundError as e:
         st.error(f"LỖI: Không tìm thấy file tài nguyên: {e}. Vui lòng kiểm tra file .pkl.")
@@ -63,17 +68,17 @@ def load_resources():
         st.stop()
 
 # Load tài nguyên
-W, b, CLASSES, X_mean, X_std, idx2label = load_resources()
+W, b, CLASSES, X_mean, X_std, idx2label, FACE_MESH = load_resources()
 
 # ==============================
-# HÀM DỰ ĐOÁN (Sử dụng lại từ code gốc)
+# HÀM DỰ ĐOÁN (Giữ nguyên)
 # ==============================
 def softmax(z):
     z = z - np.max(z)
     exp_z = np.exp(z)
     return exp_z / (np.sum(exp_z) + EPS)
 
-def predict_proba(x):
+def predict_proba(x, W, b):
     if x.ndim == 1:
         x = x.reshape(1, -1)
     z = np.dot(x, W) + b
@@ -81,7 +86,7 @@ def predict_proba(x):
 
 
 # ==============================
-# HÀM TÍNH ĐẶC TRƯNG (10 Đặc trưng) - Giữ nguyên logic
+# HÀM TÍNH ĐẶC TRƯNG (Giữ nguyên)
 # ==============================
 EYE_LEFT_IDX = np.array([33, 159, 145, 133, 153, 144])
 EYE_RIGHT_IDX = np.array([362, 386, 374, 263, 380, 385])
@@ -129,14 +134,8 @@ def get_extra_features(landmarks):
 # ==============================
 
 class DmsVideoTransformer(VideoTransformerBase):
-    """
-    Xử lý từng khung hình video từ camera: 
-    1. Phát hiện khuôn mặt.
-    2. Trích xuất 10 đặc trưng.
-    3. Dự đoán hành vi (Blink/Softmax).
-    4. Vẽ kết quả lên khung hình.
-    """
-    def __init__(self, W, b, X_mean, X_std, idx2label, blink_thresh):
+    
+    def __init__(self, W, b, X_mean, X_std, idx2label, blink_thresh, face_mesh_model):
         self.W = W
         self.b = b
         self.X_mean = X_mean
@@ -150,10 +149,9 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_ear_avg = 0.4  
         self.last_pitch = 0.0  
-        self.face_mesh = FACE_MESH # Sử dụng đối tượng MediaPipe đã khởi tạo
+        self.face_mesh = face_mesh_model # Sử dụng đối tượng MediaPipe đã khởi tạo
 
-        # Biến để truyền data ra ngoài (không bắt buộc nhưng hữu ích)
-        # Sử dụng session state để lưu trữ metadata
+        # Khởi tạo metadata trong session state
         if 'dms_metadata' not in st.session_state:
             st.session_state['dms_metadata'] = {}
 
@@ -161,7 +159,11 @@ class DmsVideoTransformer(VideoTransformerBase):
         # Chuyển đổi từ PIL Image (định dạng của streamlit-webrtc) sang numpy array (OpenCV)
         img = frame.to_ndarray(format="bgr24")
         h, w = img.shape[:2]
+        # Lật ngang khung hình để tạo hiệu ứng gương (giống code gốc)
+        img = cv2.flip(img, 1) 
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # Xử lý Face Mesh
         results = self.face_mesh.process(rgb)
 
         final_label = "No Face"
@@ -189,6 +191,8 @@ class DmsVideoTransformer(VideoTransformerBase):
             self.last_pitch = pitch
             
             # 4. ÁP DỤNG LUẬT CỨNG (HEURISTIC) CHO BLINK
+            current_pred_label = "unknown" # Đặt giá trị mặc định trước
+            
             if ear_avg < self.BLINK_THRESHOLD:
                 current_pred_label = "blink"
             else:
@@ -198,7 +202,7 @@ class DmsVideoTransformer(VideoTransformerBase):
 
                 # CHUẨN HÓA & DỰ ĐOÁN
                 feats_scaled = (feats - self.X_mean[:N_FEATURES]) / (self.X_std[:N_FEATURES] + EPS)
-                probs = predict_proba(feats_scaled)
+                probs = predict_proba(feats_scaled, self.W, self.b)
                 pred_idx = np.argmax(probs)
                 current_pred_label = self.idx2label[pred_idx]
 
@@ -206,10 +210,7 @@ class DmsVideoTransformer(VideoTransformerBase):
             self.pred_queue.append(current_pred_label)
             final_label = max(set(self.pred_queue), key=self.pred_queue.count)
             
-            # Vẽ Face Mesh (tùy chọn)
-            # mp_drawing.draw_landmarks(img, results.multi_face_landmarks[0], mp_face_mesh.FACEMESH_CONTOURS)
-
-            # Cập nhật metadata
+            # Cập nhật metadata trong session state
             st.session_state['dms_metadata'] = {
                 'final_label': final_label,
                 'ear_avg': ear_avg,
@@ -223,7 +224,7 @@ class DmsVideoTransformer(VideoTransformerBase):
             self.last_ear_avg = 0.4
             self.last_pitch = 0.0
             self.pred_queue.clear()
-            st.session_state['dms_metadata'] = {}
+            st.session_state['dms_metadata'] = {'final_label': 'No Face', 'ear_avg': 0.0, 'delta_ear': 0.0, 'delta_pitch': 0.0, 'feats': [0.0]*N_FEATURES}
 
 
         # Tính và hiển thị FPS
@@ -232,8 +233,12 @@ class DmsVideoTransformer(VideoTransformerBase):
         self.pTime = cTime
         
         # HIỂN THỊ TRÊN KHUNG HÌNH
-        color = (0, 255, 0) if final_label not in ["blink", "nod"] else (0, 0, 255)
-        
+        color = (0, 255, 0) # Green
+        if final_label.lower() == "blink":
+            color = (0, 0, 255) # Red
+        elif final_label.lower() == "nod":
+            color = (0, 255, 255) # Yellow
+            
         cv2.putText(img, f"FPS: {int(self.fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(img, f"State: {final_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 3)
         cv2.putText(img, f"EAR: {ear_avg:.2f}", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
@@ -251,13 +256,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("📹 DMS: Softmax Model Camera Test")
+st.title("📹 DMS: Softmax Model Camera Test (WebRTC)")
 st.markdown("---")
+
+# Dictionary mô tả 10 đặc trưng
+FEATURE_DESC = {
+    0: "EAR_L", 1: "EAR_R", 2: "MAR", 3: "YAW", 4: "PITCH", 
+    5: "ROLL", 6: "ANGLE_PITCH_EXTRA", 7: "DELTA_EAR", 
+    8: "FOREHEAD_Y", 9: "DELTA_PITCH",
+}
 
 # --- SIDEBAR: CẤU HÌNH ---
 with st.sidebar:
     st.header("⚙️ Cấu hình")
     st.subheader("Tham số Heuristic")
+    # Slider để người dùng điều chỉnh BLINK_THRESHOLD
     thresh = st.slider("BLINK_THRESHOLD", 0.05, 0.40, BLINK_THRESHOLD, 0.01)
 
     st.subheader("Trạng thái Mô hình")
@@ -265,7 +278,7 @@ with st.sidebar:
     st.write(f"Features: {N_FEATURES}")
     st.write(f"Smoothing Window: {SMOOTH_WINDOW}")
     st.write("---")
-    st.markdown("⚠️ **Lưu ý:** Ứng dụng này cần quyền truy cập camera.")
+    st.markdown("⚠️ **Lưu ý:** Ứng dụng cần quyền truy cập camera.")
 
 # --- MAIN CONTENT: CAMERA VÀ DATA DISPLAY ---
 
@@ -275,13 +288,15 @@ with col_cam:
     st.subheader("Camera Trực tiếp & Phân tích")
     
     # Khởi tạo WebRTC Stream
-    webrtc_ctx = webrtc_stream(
+    # ĐÃ SỬA LỖI: Thay webrtc_stream bằng webrtc_streamer
+    webrtc_ctx = webrtc_streamer(
         key="dms-webcam",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=RTCConfiguration(
             {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
         ),
-        video_processor_factory=lambda: DmsVideoTransformer(W, b, X_mean, X_std, idx2label, thresh),
+        # Truyền các tham số cần thiết vào lớp VideoTransformer
+        video_processor_factory=lambda: DmsVideoTransformer(W, b, X_mean, X_std, idx2label, thresh, FACE_MESH),
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
@@ -293,37 +308,37 @@ with col_data:
     status_placeholder = st.empty()
     feature_placeholder = st.empty()
 
+    # Chỉ chạy vòng lặp cập nhật UI nếu WebRTC đang hoạt động
     if webrtc_ctx.state.playing:
         while webrtc_ctx.state.playing:
             metadata = st.session_state.get('dms_metadata', {})
 
-            if metadata:
+            if metadata and metadata['final_label'] != 'No Face':
                 # 1. Hiển thị Trạng thái (Phán đoán cuối cùng)
                 final_label = metadata.get('final_label', 'UNKNOWN')
-                color_map = {"blink": "red", "nod": "yellow", "yawn": "orange", "smile": "blue", "unknown": "gray", "no face": "gray"}
+                color_map = {"blink": "red", "nod": "darkorange", "yawn": "blue", "smile": "green", "unknown": "gray", "no face": "gray"}
                 
                 status_html = f"""
-                <div style='background-color: {color_map.get(final_label.lower(), 'purple')}; padding: 10px; border-radius: 10px; text-align: center;'>
-                    <h2 style='color: white; margin: 0;'>{final_label.upper()}</h2>
-                    <p style='color: white; margin: 0;'>EAR: {metadata['ear_avg']:.3f}</p>
+                <div style='background-color: {color_map.get(final_label.lower(), 'purple')}; padding: 15px; border-radius: 10px; text-align: center;'>
+                    <h1 style='color: white; margin: 0;'>{final_label.upper()}</h1>
                 </div>
                 """
                 status_placeholder.markdown(status_html, unsafe_allow_html=True)
                 
                 # 2. Hiển thị 10 Đặc trưng
                 feats = metadata.get('feats', [0.0]*N_FEATURES)
-                feature_desc = [f"F{i+1}" for i in range(N_FEATURES)]
+                feature_names = [FEATURE_DESC[i] for i in range(N_FEATURES)]
                 
                 feature_data = {
-                    "Đặc trưng": feature_desc,
+                    "Đặc trưng": feature_names,
                     "Giá trị": [f"{f:.4f}" for f in feats]
                 }
                 feature_placeholder.dataframe(feature_data, use_container_width=True, hide_index=True)
 
             else:
-                status_placeholder.warning("Đang chờ khuôn mặt hoặc camera...")
+                status_placeholder.warning("🔴 Đang chờ khuôn mặt hoặc camera chưa bật. Nhấn START.")
                 feature_placeholder.empty()
 
             time.sleep(0.1) # Cập nhật UI 10 lần/giây
     else:
-        st.info("Nhấn 'START' để bắt đầu camera và phân tích.")
+        st.info("Nhấn 'START' để bắt đầu camera và phân tích. Vui lòng cấp quyền truy cập camera.")
