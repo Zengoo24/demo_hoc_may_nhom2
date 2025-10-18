@@ -1,0 +1,7 @@
+streamlit
+numpy
+opencv-python-headless
+mediapipe==0.10.11
+Pillow
+streamlit-webrtc
+joblib
