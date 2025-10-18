@@ -29,7 +29,7 @@ SCALER_PATH = "scale1.pkl"
 LABEL_MAP_PATH = "label_map_6cls.json"
 SMOOTH_WINDOW = 5
 BLINK_THRESHOLD = 0.20
-N_FEATURES = 10 # Đảm bảo số lượng đặc trưng khớp với model
+N_FEATURES = 10 
 
 # --- Cấu hình Wheel (Hands) ---
 WHEEL_MODEL_PATH = "softmax_wheel_model.pkl"
@@ -42,7 +42,6 @@ WHEEL_SCALER_PATH = "scaler_wheel.pkl"
 def softmax_predict(X, W, b):
     """Thực hiện dự đoán Softmax (Face Mesh)."""
     logits = X @ W + b
-    # Áp dụng softmax để lấy xác suất, sau đó lấy argmax
     z = logits - np.max(logits, axis=1, keepdims=True)
     exp_z = np.exp(z)
     probs = exp_z / np.sum(exp_z, axis=1, keepdims=True)
@@ -76,7 +75,6 @@ def load_assets():
             label_map = json.load(f)
             id2label = {int(v): k for k, v in label_map.items()}
 
-        # Kiểm tra kích thước đặc trưng của mô hình
         if W.shape[0] != N_FEATURES:
             st.error(f"LỖI KHÔNG TƯƠNG THÍCH: Mô hình FACE MESH yêu cầu {W.shape[0]} đặc trưng, nhưng ứng dụng này trích xuất {N_FEATURES} đặc trưng. Vui lòng kiểm tra lại file model!")
             st.stop()
@@ -156,12 +154,10 @@ def get_extra_features(landmarks):
     nose, chin = landmarks[1], landmarks[152]
     angle_pitch_extra = np.degrees(np.arctan2(chin[1] - nose[1], (chin[2] - nose[2]) + EPS))
     forehead_y = np.mean(landmarks[[10, 338, 297, 332, 284], 1])
-    # Không dùng cheek_dist trong 10 đặc trưng của mô hình
-    # cheek_dist = np.linalg.norm(landmarks[50] - landmarks[280])
-    return angle_pitch_extra, forehead_y #, cheek_dist
+    return angle_pitch_extra, forehead_y
 
 # ======================================================================
-# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS) - Giữ nguyên logic
+# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS)
 # ======================================================================
 
 def detect_wheel_circle(frame):
@@ -235,19 +231,24 @@ def process_static_image(image_file, mesh, W, b, mean, std, id2label):
         ear_avg = (ear_l + ear_r) / 2.0
         mar = mouth_aspect_ratio(landmarks)
         yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
-        angle_pitch_extra, forehead_y = get_extra_features(landmarks) # Đã bỏ cheek_dist
+        angle_pitch_extra, forehead_y = get_extra_features(landmarks)
 
-        delta_ear_value = 0.0 # Luôn bằng 0 cho ảnh tĩnh
-        delta_pitch_value = 0.0 # Luôn bằng 0 cho ảnh tĩnh
+        # ĐẶC TRƯNG ĐỘNG (Phải đặt bằng 0 cho ảnh tĩnh)
+        delta_ear_value = 0.0 
+        delta_pitch_value = 0.0 
 
         if ear_avg < BLINK_THRESHOLD:
             result_label = "BLINK (Heuristic)"
         else:
-            # 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, DELTA_PITCH]
+            # TẠO MẢNG 10 ĐẶC TRƯNG
+            # [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, DELTA_PITCH]
             feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                               angle_pitch_extra, delta_ear_value, forehead_y, delta_pitch_value], dtype=np.float32)
 
+            # CHUẨN HÓA VÀ DỰ ĐOÁN
             feats_scaled = (feats - mean[:N_FEATURES]) / (std[:N_FEATURES] + EPS)
+            
+            # Dự đoán Softmax
             pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), W, b)[0]
             result_label = id2label.get(pred_idx, "UNKNOWN")
 
@@ -299,7 +300,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     X_scaled = (X_sample - X_mean_WHEEL) / (X_std_WHEEL + EPS)
 
     logits = X_scaled @ W_WHEEL + b_WHEEL
-    probabilities = softmax_wheel(logits)[0] # Sử dụng softmax_wheel
+    probabilities = softmax_wheel(logits)[0] 
 
     predicted_index = np.argmax(probabilities)
     predicted_class = CLASS_NAMES_WHEEL[predicted_index]
@@ -324,7 +325,6 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
         self.W = W; self.b = b; self.mean = mean; self.std = std; self.id2label = id2label
-        # Khởi tạo Face Mesh trong transformer để đảm bảo thread-safety
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
@@ -341,17 +341,16 @@ class DrowsinessProcessor(VideoProcessorBase):
         frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
-        # Luôn xử lý trên ảnh đã lật để phù hợp với MediaPipe và hiệu ứng gương
-        rgb_flipped = cv2.flip(cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB), 1)
+        # 🛑 KHÔNG LẬT: Xử lý trực tiếp trên ảnh RGB không lật (khắc phục lỗi lật màn hình)
+        rgb_unflipped = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
-        results = self.face_mesh.process(rgb_flipped)
+        results = self.face_mesh.process(rgb_unflipped)
         
-        # Biến để hiển thị
         delta_ear_value_display = 0.0
         delta_pitch_value_display = 0.0
         ear_avg_display = 0.0
         
-        predicted_label_frame = "NO FACE" # Mặc định khi không có mặt
+        predicted_label_frame = "NO FACE" 
 
         if results.multi_face_landmarks:
             landmarks = np.array([[p.x * w, p.y * h, p.z * w] for p in results.multi_face_landmarks[0].landmark])
@@ -359,11 +358,11 @@ class DrowsinessProcessor(VideoProcessorBase):
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
             ear_avg = (ear_l + ear_r) / 2.0
-            ear_avg_display = ear_avg # Cập nhật giá trị hiển thị
+            ear_avg_display = ear_avg 
 
             mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
-            angle_pitch_extra, forehead_y = get_extra_features(landmarks) # Đã bỏ cheek_dist
+            angle_pitch_extra, forehead_y = get_extra_features(landmarks)
 
             # Tính toán delta EAR và Pitch
             delta_ear_value_display = ear_avg - self.last_ear_avg
@@ -376,7 +375,7 @@ class DrowsinessProcessor(VideoProcessorBase):
             if ear_avg < BLINK_THRESHOLD:
                 predicted_label_frame = "blink"
             else:
-                # 10 đặc trưng: [EAR_L, EAR_R, MAR, YAW, PITCH, ROLL, ANGLE_PITCH_EXTRA, DELTA_EAR, FOREHEAD_Y, DELTA_PITCH]
+                # 10 đặc trưng
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
                                   angle_pitch_extra, delta_ear_value_display, forehead_y, delta_pitch_value_display], dtype=np.float32)
 
@@ -390,7 +389,7 @@ class DrowsinessProcessor(VideoProcessorBase):
             # Reset trạng thái khi không có mặt
             self.last_ear_avg = 0.4
             self.last_pitch = 0.0
-            self.pred_queue.clear() # Xóa hàng đợi để tránh dự đoán sai từ dữ liệu cũ
+            self.pred_queue.clear() 
 
         # Lấy nhãn cuối cùng từ hàng đợi (làm mượt)
         if len(self.pred_queue) > 0:
@@ -398,8 +397,8 @@ class DrowsinessProcessor(VideoProcessorBase):
         else:
             self.last_pred_label = "NO FACE"
 
-        # Vẽ lên khung hình đã được lật (rgb_flipped)
-        frame_display_bgr = cv2.cvtColor(rgb_flipped, cv2.COLOR_RGB2BGR) # Chuyển lại BGR để vẽ
+        # Vẽ lên khung hình GỐC (frame_resized)
+        frame_display_bgr = frame_resized
 
         cv2.putText(frame_display_bgr, f"Trang thai: {self.last_pred_label.upper()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 3)
         cv2.putText(frame_display_bgr, f"EAR Avg: {ear_avg_display:.3f}", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
@@ -415,7 +414,6 @@ st.set_page_config(page_title="Demo Softmax - Hybrid Detection", layout="wide")
 st.title("🧠 Ứng dụng Hybrid Nhận diện Trạng thái Lái xe")
 
 tab1, tab2, tab3 = st.tabs(["🔴 Dự đoán Live Camera", "🖼️ Dự đoán Ảnh Tĩnh (Khuôn Mặt)", "🚗 Kiểm tra Vô Lăng (Tay)"])
-# mesh_static đã được load trong load_assets()
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
@@ -425,19 +423,16 @@ with tab1:
 
     col1, col2, col3 = st.columns([1, 4, 1])
     with col2:
-        # Bộ ICE Servers mở rộng để tăng cường khả năng kết nối
+        # Cấu hình WebRTC mở rộng
         ICE_SERVERS = [
             {"urls": ["stun:stun.l.google.com:19302"]},
             {"urls": ["stun:stun1.l.google.com:19302"]},
             {"urls": ["stun:stun2.l.google.com:19302"]},
             {"urls": ["stun:stun.services.mozilla.com:3478"]},
-            # Thêm một TURN server công khai (có thể không ổn định)
             {"urls": ["turn:numb.viagenie.ca:3478"], "username": "webrtc@live.com", "credential": "muazkh"} 
         ]
         
-        rtc_config = RTCConfiguration(
-            {"iceServers": ICE_SERVERS}
-        )
+        rtc_config = RTCConfiguration({"iceServers": ICE_SERVERS})
 
         webrtc_streamer(
             key="softmax_driver_live",
