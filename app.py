@@ -254,10 +254,12 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     return cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB), predicted_class.upper()
 
 # ======================================================================
-# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR) - ĐÃ TỐI GIẢN HIỂN THỊ
+# ======================================================================
+# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR)
 # ======================================================================
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
+        # Khởi tạo các tham số mô hình
         self.W = W; self.b = b; self.mean = mean; self.std = std; self.id2label = id2label
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -265,11 +267,11 @@ class DrowsinessProcessor(VideoProcessorBase):
         self.last_pred_label = "CHO DU LIEU VAO"
         self.N_FEATURES = N_FEATURES
         
-        # Biến trạng thái để tính delta (vẫn cần thiết cho tính toán mô hình)
+        # 🛑 ĐẢM BẢO KHỞI TẠO self.pTime và self.fps 🛑
         self.last_ear_avg = 0.4 
         self.last_pitch = 0.0
-        self.pTime = time.time()
-        self.fps = 0
+        self.pTime = time.time()  # Khởi tạo thời gian trước đó
+        self.fps = 0              # Khởi tạo FPS
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
@@ -281,10 +283,9 @@ class DrowsinessProcessor(VideoProcessorBase):
 
         results = self.face_mesh.process(rgb_unflipped)
         
-        # Vẫn tính toán các giá trị delta để truyền vào mô hình
-        ear_avg = 0.0
-        delta_ear_value = 0.0
-        delta_pitch_value = 0.0
+        delta_ear_value_display = 0.0
+        delta_pitch_value_display = 0.0
+        ear_avg_display = 0.0
         
         predicted_label_frame = "NO FACE" 
 
@@ -294,14 +295,15 @@ class DrowsinessProcessor(VideoProcessorBase):
             ear_l = eye_aspect_ratio(landmarks, True)
             ear_r = eye_aspect_ratio(landmarks, False)
             ear_avg = (ear_l + ear_r) / 2.0
+            ear_avg_display = ear_avg 
 
             mar = mouth_aspect_ratio(landmarks)
             yaw, pitch, roll = head_pose_yaw_pitch_roll(landmarks)
             angle_pitch_extra, forehead_y = get_extra_features(landmarks)
 
-            # Tính toán delta
-            delta_ear_value = ear_avg - self.last_ear_avg
-            delta_pitch_value = pitch - self.last_pitch
+            # Tính toán delta EAR và Pitch
+            delta_ear_value_display = ear_avg - self.last_ear_avg
+            delta_pitch_value_display = pitch - self.last_pitch
 
             # Cập nhật giá trị last_ sau khi tính delta
             self.last_ear_avg = ear_avg
@@ -310,9 +312,9 @@ class DrowsinessProcessor(VideoProcessorBase):
             if ear_avg < BLINK_THRESHOLD:
                 predicted_label_frame = "blink"
             else:
-                # 10 đặc trưng
+                # 10 đặc trưng động
                 feats = np.array([ear_l, ear_r, mar, yaw, pitch, roll,
-                                  angle_pitch_extra, delta_ear_value, forehead_y, delta_pitch_value], dtype=np.float32)
+                                  angle_pitch_extra, delta_ear_value_display, forehead_y, delta_pitch_value_display], dtype=np.float32)
 
                 feats_scaled = (feats - self.mean[:self.N_FEATURES]) / (self.std[:self.N_FEATURES] + EPS)
                 pred_idx = softmax_predict(np.expand_dims(feats_scaled, axis=0), self.W, self.b)[0]
@@ -332,10 +334,11 @@ class DrowsinessProcessor(VideoProcessorBase):
         else:
             self.last_pred_label = "NO FACE"
             
-        # Tính FPS
+        # 🛑 Tính FPS 🛑
         cTime = time.time()
+        # Sử dụng 0.9 và 0.1 cho làm mượt FPS (Exponential Moving Average)
         self.fps = 0.9 * self.fps + 0.1 * (1 / (cTime - self.pTime + EPS))
-        self.pTime = cTime
+        self.pTime = cTime # Cập nhật thời gian trước đó
 
         # Vẽ lên khung hình GỐC (frame_resized)
         frame_display_bgr = frame_resized
