@@ -35,7 +35,7 @@ N_FEATURES = 10
 WHEEL_MODEL_PATH = "softmax_wheel_model.pkl"
 WHEEL_SCALER_PATH = "scaler_wheel.pkl"
 YOLO_MODEL_PATH = "best (1).pt" 
-
+EXPECTED_WHEEL_FEATURES = 128 # Kích thước đặc trưng mới
 
 # ======================================================================
 # II. CÁC HÀM TÍNH TOÁN CƠ BẢN VÀ TẢI TÀI NGUYÊN
@@ -101,6 +101,11 @@ def load_assets():
             wheel_scaler_data = joblib.load(f)
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
+        
+        # Kiểm tra kích thước đặc trưng của mô hình Wheel
+        if W_WHEEL.shape[0] != EXPECTED_WHEEL_FEATURES:
+            st.error(f"LỖI KHÔNG TƯƠNG THÍCH: Mô hình VÔ LĂNG yêu cầu {W_WHEEL.shape[0]} đặc trưng, nhưng code dự kiến {EXPECTED_WHEEL_FEATURES}. Vui lòng kiểm tra và huấn luyện lại mô hình Softmax Vô Lăng.")
+            st.stop()
 
         # --- 3. Tải mô hình YOLOv8 ---
         yolo_model = load_yolo_model(YOLO_MODEL_PATH)
@@ -116,7 +121,7 @@ def load_assets():
         st.error(f"LỖI FILE: Không tìm thấy file tài nguyên. Vui lòng kiểm tra đường dẫn: {e.filename}")
         st.stop()
     except Exception as e:
-        st.error(f"LỖI LOAD DỮ LIỆU: Chi tiết: {e}")
+        st.error(f"LỖỖI LOAD DỮ LIỆU: Chi tiết: {e}")
         st.stop()
 
 # Tải tài sản (Chạy một lần)
@@ -171,7 +176,7 @@ def get_extra_features(landmarks):
     return angle_pitch_extra, forehead_y
 
 # ======================================================================
-# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS)
+# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS - 128 FEATURES)
 # ======================================================================
 
 def detect_wheel_yolo(frame, yolo_model):
@@ -194,7 +199,10 @@ def detect_wheel_yolo(frame, yolo_model):
     return None, None
 
 def extract_wheel_features(image, hands_processor, wheel_coords):
-    """Trích xuất 128 đặc trưng tay cho mô hình Softmax."""
+    """
+    Trích xuất 128 đặc trưng tay cho mô hình Softmax (Bao gồm tọa độ tuyệt đối,
+    khoảng cách tới tâm và các đặc trưng tương đối của đầu ngón tay).
+    """
     xw, yw, rw = wheel_coords
     h, w, _ = image.shape
     feats_all = []
@@ -209,19 +217,51 @@ def extract_wheel_features(image, hands_processor, wheel_coords):
 
         for hand_landmarks in res.multi_hand_landmarks:
             feats = []
+            normalized_coords = []
             
+            # 1. Trích xuất Tọa độ chuẩn hóa (63 đặc trưng: 21 * x,y,z)
+            for lm in hand_landmarks.landmark:
+                feats.extend([lm.x, lm.y, lm.z])
+                normalized_coords.append(np.array([lm.x, lm.y])) 
+
+            # 2. Đặc trưng Khoảng cách đến tâm vô lăng (1 đặc trưng)
             hx = hand_landmarks.landmark[0].x * w
             hy = hand_landmarks.landmark[0].y * h
             dist_to_center = np.sqrt((xw - hx) ** 2 + (yw - hy) ** 2)
-            
-            # Thêm 63 tọa độ chuẩn hóa và 1 đặc trưng khoảng cách chuẩn hóa
-            for lm in hand_landmarks.landmark:
-                feats.extend([lm.x, lm.y, lm.z])
-            feats.append(dist_to_center / (rw + EPS)) 
+            feats.append(dist_to_center / (rw + EPS))
 
+            # --- THÊM CÁC ĐẶC TRƯNG NÂNG CAO (64 + 10 + 10 = 84 features per hand) ---
+            
+            # a) Đặc trưng vị trí tương đối của các đầu ngón tay so với tâm vô lăng (10 đặc trưng)
+            tip_indices = [4, 8, 12, 16, 20] 
+            
+            for i in tip_indices:
+                lm_tip = hand_landmarks.landmark[i]
+                
+                tip_x = lm_tip.x * w
+                tip_y = lm_tip.y * h
+                
+                # Khoảng cách tương đối
+                rel_dist = np.sqrt((xw - tip_x) ** 2 + (yw - tip_y) ** 2)
+                feats.append(rel_dist / (rw + EPS))
+                
+                # Góc tương đối
+                angle = np.arctan2(tip_y - yw, tip_x - xw) / np.pi 
+                feats.append(angle)
+
+            # b) Đặc trưng Khoảng cách giữa các ngón tay (10 đặc trưng)
+            # (5, 8) = Ngón trỏ, (9, 12) = Ngón giữa, v.v.
+            pairs = [(5, 8), (9, 12), (13, 16), (17, 20), (0, 5)] 
+            for i, j in pairs:
+                p_i = normalized_coords[i]
+                p_j = normalized_coords[j]
+                
+                distance = np.linalg.norm(p_i - p_j)
+                feats.append(distance)
+                
             feats_all.extend(feats)
 
-        # Đảm bảo đủ độ dài (128)
+        # Đảm bảo đủ độ dài (128) cho mô hình 2 tay
         expected_len = W_WHEEL.shape[0] 
         
         if len(feats_all) < expected_len:
@@ -239,8 +279,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     img_pil = Image.open(image_file).convert('RGB')
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    hands_processor = get_mp_hands_instance()
-
+    
     # 1. PHÁT HIỆN VÔ LĂNG BẰNG YOLO
     bbox_result, wheel_coords = detect_wheel_yolo(img_bgr, YOLO_MODEL)
 
@@ -248,8 +287,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         cv2.putText(img_bgr, "WHEEL NOT FOUND", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), "WHEEL NOT FOUND"
 
-    # 2. TRÍCH XUẤT ĐẶC TRƯNG
-    features = extract_wheel_features(img_bgr, hands_processor, wheel_coords)
+    # 2. TRÍCH XUẤT ĐẶC TRƯNG (Sử dụng hàm 128 features mới)
+    # Không cần truyền hands_processor vì nó được tạo lại bên trong extract_wheel_features
+    features = extract_wheel_features(img_bgr, None, wheel_coords)
     
     final_predicted_class = "off-wheel" 
 
@@ -272,7 +312,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         confidence = probabilities[predicted_index] * 100
         
         # 4. Gán nhãn hiển thị
-        display_label = "CAM" if final_predicted_class == "on-wheel" else "ROI"
+        display_label = "CAM" if final_predicted_class == "on-wheel" else "KHONG CAM"
         final_color = (0, 255, 0) if final_predicted_class == "on-wheel" else (0, 0, 255)
         text_to_display = f"{display_label} ({confidence:.1f}%)"
         
@@ -282,7 +322,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
             res_for_drawing = hands_drawer.process(rgb_for_drawing)
             if res_for_drawing.multi_hand_landmarks:
                 for hand_landmarks in res_for_drawing.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(img_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                    mp_drawing.draw_landmarks(img_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                                              mp_drawing.DrawingSpec(color=(255, 255, 0), thickness=2, circle_radius=2),
+                                              mp_drawing.DrawingSpec(color=(255, 200, 0), thickness=2, circle_radius=2))
 
     # 5. Vẽ Vô lăng
     x_min, y_min, x_max, y_max = bbox_result
