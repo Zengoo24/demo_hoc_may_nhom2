@@ -456,8 +456,8 @@ with tab1:
 
 with tab2:
     st.header("2. Kiểm tra Vị trí Tay (Vô Lăng)")
-    st.warning(f"Mô hình Vô Lăng nhận diện: {CLASS_NAMES_WHEEL}")
-    st.markdown("### Tải lên ảnh tay trên/rời vô lăng để dự đoán")
+    st.warning(f"Nhận diện: {CLASS_NAMES_WHEEL}")
+    st.markdown("### Tải lên ảnh tay cầm/rời vô lăng để dự đoán")
     uploaded_wheel_file = st.file_uploader("Chọn một ảnh vô lăng (.jpg, .png)", type=["jpg", "png", "jpeg"], key="wheel_upload")
 
     if uploaded_wheel_file is not None:
