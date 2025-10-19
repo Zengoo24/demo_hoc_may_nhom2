@@ -473,4 +473,4 @@ with tab2:
             st.metric(label="Vị trí Tay Dự đoán", value=predicted_label.upper())
             st.caption("Kiểm tra màu sắc: Xanh lá (On-wheel), Đỏ (Off-wheel)")
     else:
-        st.info("Vui lòng tải lên một ảnh lái xe để kiểm tra vị trí tay.")
+        st.info("Vui lòng tải lên một ảnh lên để kiểm tra vị trí tay.")
