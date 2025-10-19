@@ -9,7 +9,6 @@ import joblib
 from collections import deque
 from PIL import Image
 import time
-# 🛑 ĐÃ SỬA: Thêm import YOLO 🛑
 from ultralytics import YOLO 
 
 # Thêm khai báo mp_drawing và mp_hands
@@ -35,8 +34,7 @@ N_FEATURES = 10
 # --- Cấu hình Wheel (Hands) ---
 WHEEL_MODEL_PATH = "softmax_wheel_model.pkl"
 WHEEL_SCALER_PATH = "scaler_wheel.pkl"
-# 🛑 ĐÃ SỬA: Thêm đường dẫn YOLO Model 🛑
-YOLO_MODEL_PATH = "best (1).pt" 
+YOLO_MODEL_PATH = "best.pt" 
 
 
 # ======================================================================
@@ -62,7 +60,6 @@ def get_mp_hands_instance():
     """Tạo instance MediaPipe Hands (cho xử lý ảnh tĩnh Vô lăng)."""
     return mp.solutions.hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.5)
 
-# 🛑 ĐÃ SỬA: Hàm tải YOLO model riêng 🛑
 @st.cache_resource
 def load_yolo_model(model_path):
     """Tải mô hình YOLOv8 đã train."""
@@ -105,15 +102,14 @@ def load_assets():
             X_mean_WHEEL = wheel_scaler_data["X_mean"]
             X_std_WHEEL = wheel_scaler_data["X_std"]
 
-        # 🛑 ĐÃ SỬA: Tải mô hình YOLOv8 🛑
+        # --- 3. Tải mô hình YOLOv8 ---
         yolo_model = load_yolo_model(YOLO_MODEL_PATH)
-        if yolo_model is None: # Nếu tải YOLO thất bại, dừng ứng dụng
+        if yolo_model is None: 
             st.stop()
             
-        # --- 3. Khởi tạo Face Mesh (Global Reference) ---
+        # --- 4. Khởi tạo Face Mesh (Global Reference) ---
         mp_face_mesh = mp.solutions.face_mesh
         
-        # 🛑 ĐÃ SỬA: Thêm yolo_model vào return 🛑
         return W, b, mean_data, std_data, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, yolo_model
 
     except FileNotFoundError as e:
@@ -175,10 +171,9 @@ def get_extra_features(landmarks):
     return angle_pitch_extra, forehead_y
 
 # ======================================================================
-# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS) - ĐÃ SỬA
+# IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS)
 # ======================================================================
 
-# 🛑 ĐÃ SỬA: Hàm Phát hiện YOLO 🛑
 def detect_wheel_yolo(frame, yolo_model):
     """Phát hiện vô lăng bằng YOLOv8 và trả về (bbox, x, y, r)."""
     # classes=[0] giả định 'steering_wheel' là lớp 0
@@ -198,7 +193,6 @@ def detect_wheel_yolo(frame, yolo_model):
             
     return None, None
 
-# 🛑 ĐÃ SỬA: Hàm extract_wheel_features 🛑
 def extract_wheel_features(image, hands_processor, wheel_coords):
     """Trích xuất 128 đặc trưng tay cho mô hình Softmax."""
     xw, yw, rw = wheel_coords
@@ -238,7 +232,7 @@ def extract_wheel_features(image, hands_processor, wheel_coords):
     return np.array(feats_all, dtype=np.float32)
 
 # ======================================================================
-# V. HÀM XỬ LÝ ẢNH TĨNH (WHEEL) - ĐÃ SỬA
+# V. HÀM XỬ LÝ ẢNH TĨNH (WHEEL)
 # ======================================================================
 
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, YOLO_MODEL):
@@ -254,10 +248,12 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         cv2.putText(img_bgr, "WHEEL NOT FOUND", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), "WHEEL NOT FOUND"
 
-    # 2. TRÍCH XUẤT ĐẶC TRƯNG TAY
+    # 2. TRÍCH XUẤT ĐẶC TRƯNG
     features = extract_wheel_features(img_bgr, hands_processor, wheel_coords)
     
-    # 🛑 LUẬT CỨNG: KHÔNG TAY = RỜI (Xử lý trường hợp features is None) 🛑
+    final_predicted_class = "off-wheel" 
+
+    # 🛑 LUẬT CỨNG: KHÔNG TAY = RỜI 🛑
     if features is None:
         final_predicted_class = "off-wheel"
         display_label = "RỜI"
@@ -302,7 +298,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
 
 
 # ======================================================================
-# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR) - Giữ nguyên Face Mesh
+# VII. LỚP XỬ LÝ VIDEO LIVE (WEBRTC PROCESSOR)
 # ======================================================================
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
