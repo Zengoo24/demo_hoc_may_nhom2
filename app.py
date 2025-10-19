@@ -124,7 +124,6 @@ def load_assets():
         st.stop()
 
 # Tải tài sản (Chạy một lần)
-# 🛑 ĐÃ SỬA: Nhận yolo_model từ load_assets 🛑
 W, b, mean, std, id2label, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, YOLO_MODEL = load_assets()
 mp_face_mesh = mp.solutions.face_mesh # Global reference
 
@@ -179,7 +178,7 @@ def get_extra_features(landmarks):
 # IV. HÀM TRÍCH XUẤT ĐẶC TRƯNG VÔ LĂNG (WHEEL/HANDS) - ĐÃ SỬA
 # ======================================================================
 
-# 🛑 ĐÃ SỬA: Thay thế detect_wheel_circle bằng detect_wheel_yolo 🛑
+# 🛑 ĐÃ SỬA: Hàm Phát hiện YOLO 🛑
 def detect_wheel_yolo(frame, yolo_model):
     """Phát hiện vô lăng bằng YOLOv8 và trả về (bbox, x, y, r)."""
     # classes=[0] giả định 'steering_wheel' là lớp 0
@@ -199,25 +198,24 @@ def detect_wheel_yolo(frame, yolo_model):
             
     return None, None
 
-# 🛑 ĐÃ SỬA: Hàm extract_wheel_features (bỏ luật cứng kiểm tra khoảng cách) 🛑
+# 🛑 ĐÃ SỬA: Hàm extract_wheel_features 🛑
 def extract_wheel_features(image, hands_processor, wheel_coords):
     """Trích xuất 128 đặc trưng tay cho mô hình Softmax."""
     xw, yw, rw = wheel_coords
     h, w, _ = image.shape
     feats_all = []
 
-    with mp_hands.Hands(static_image_mode=True, max_num_hands=2) as hands: # Sử dụng mp_hands global
+    with mp_hands.Hands(static_image_mode=True, max_num_hands=2) as hands:
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         res = hands.process(rgb)
         
-        # Nếu không tìm thấy tay, trả về None
+        # Nếu không tìm thấy tay, trả về None (luật "Không tay = RỜI" sẽ xử lý)
         if not res.multi_hand_landmarks: 
             return None 
 
         for hand_landmarks in res.multi_hand_landmarks:
             feats = []
             
-            # Tính toán khoảng cách cổ tay đến tâm vô lăng (dùng làm 1 đặc trưng)
             hx = hand_landmarks.landmark[0].x * w
             hy = hand_landmarks.landmark[0].y * h
             dist_to_center = np.sqrt((xw - hx) ** 2 + (yw - hy) ** 2)
@@ -230,7 +228,7 @@ def extract_wheel_features(image, hands_processor, wheel_coords):
             feats_all.extend(feats)
 
         # Đảm bảo đủ độ dài (128)
-        expected_len = W_WHEEL.shape[0] # Sử dụng kích thước của W_WHEEL để xác định số lượng đặc trưng mong muốn
+        expected_len = W_WHEEL.shape[0] 
         
         if len(feats_all) < expected_len:
             feats_all.extend([0.0] * (expected_len - len(feats_all)))
@@ -243,26 +241,23 @@ def extract_wheel_features(image, hands_processor, wheel_coords):
 # V. HÀM XỬ LÝ ẢNH TĨNH (WHEEL) - ĐÃ SỬA
 # ======================================================================
 
-# 🛑 ĐÃ SỬA: Cập nhật hàm process_static_wheel_image để dùng YOLO và Softmax thuần 🛑
 def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, YOLO_MODEL):
     img_pil = Image.open(image_file).convert('RGB')
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    hands_processor = get_mp_hands_instance() # Lấy instance MediaPipe Hands
+    hands_processor = get_mp_hands_instance()
 
     # 1. PHÁT HIỆN VÔ LĂNG BẰNG YOLO
-    bbox, wheel_coords = detect_wheel_yolo(img_bgr, YOLO_MODEL)
+    bbox_result, wheel_coords = detect_wheel_yolo(img_bgr, YOLO_MODEL)
 
     if wheel_coords is None:
         cv2.putText(img_bgr, "WHEEL NOT FOUND", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), "WHEEL NOT FOUND"
 
     # 2. TRÍCH XUẤT ĐẶC TRƯNG TAY
-    features = extract_wheel_features(img_bgr, hands_processor, wheel_coords) # Truyền wheel_coords
-
-    final_predicted_class = "off-wheel" # Mặc định là off-wheel
-
-    # 🛑 LUẬT CỨNG: KHÔNG TAY = RỜI 🛑
+    features = extract_wheel_features(img_bgr, hands_processor, wheel_coords)
+    
+    # 🛑 LUẬT CỨNG: KHÔNG TAY = RỜI (Xử lý trường hợp features is None) 🛑
     if features is None:
         final_predicted_class = "off-wheel"
         display_label = "RỜI"
@@ -286,7 +281,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         text_to_display = f"{display_label} ({confidence:.1f}%)"
         
         # Vẽ tay (landmarks) lên ảnh BGR
-        with mp_hands.Hands(static_image_mode=True, max_num_hands=2) as hands_drawer: # Dùng tên khác để tránh trùng
+        with mp_hands.Hands(static_image_mode=True, max_num_hands=2) as hands_drawer: 
             rgb_for_drawing = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             res_for_drawing = hands_drawer.process(rgb_for_drawing)
             if res_for_drawing.multi_hand_landmarks:
@@ -294,14 +289,13 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
                     mp_drawing.draw_landmarks(img_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
     # 5. Vẽ Vô lăng
-    x_min, y_min, x_max, y_max = bbox
+    x_min, y_min, x_max, y_max = bbox_result
     xw, yw, rw = wheel_coords
     
     cv2.rectangle(img_bgr, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2) # Bounding Box YOLO
     cv2.circle(img_bgr, (xw, yw), rw, (255, 0, 255), 2) # Vòng tròn ước tính từ YOLO
-    cv2.circle(img_bgr, (xw, yw), 5, (0, 0, 255), -1)    # Tâm
-
-    # 6. Đặt text hiển thị cuối cùng (sau khi vẽ mọi thứ khác)
+    
+    # 6. Đặt text hiển thị cuối cùng
     cv2.putText(img_bgr, text_to_display, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, final_color, 3, cv2.LINE_AA)
     
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), final_predicted_class.upper()
