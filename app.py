@@ -256,9 +256,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
     # 🛑 LUẬT CỨNG: KHÔNG TAY = RỜI 🛑
     if features is None:
         final_predicted_class = "off-wheel"
-        display_label = "RỜI"
+        display_label = "ROI"
         final_color = (0, 0, 255) # Đỏ
-        text_to_display = "RỜI (KHÔNG CÓ TAY)"
+        text_to_display = "ROI"
     
     else:
         # 3. DỰ ĐOÁN SOFTMAX THUẦN TÚY
@@ -272,7 +272,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         confidence = probabilities[predicted_index] * 100
         
         # 4. Gán nhãn hiển thị
-        display_label = "CẦM" if final_predicted_class == "on-wheel" else "RỜI"
+        display_label = "CAM" if final_predicted_class == "on-wheel" else "ROI"
         final_color = (0, 255, 0) if final_predicted_class == "on-wheel" else (0, 0, 255)
         text_to_display = f"{display_label} ({confidence:.1f}%)"
         
