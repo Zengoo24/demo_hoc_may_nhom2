@@ -387,7 +387,7 @@ st.set_page_config(page_title="Demo Softmax", layout="wide")
 tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng (Tay)"])
 
 with tab1:
-    st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)"
+    st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
     st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
