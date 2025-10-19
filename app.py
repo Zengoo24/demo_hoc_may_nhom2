@@ -34,7 +34,7 @@ N_FEATURES = 10
 # --- Cấu hình Wheel (Hands) ---
 WHEEL_MODEL_PATH = "softmax_wheel_model.pkl"
 WHEEL_SCALER_PATH = "scaler_wheel.pkl"
-YOLO_MODEL_PATH = "best.pt" 
+YOLO_MODEL_PATH = "best (1).pt" 
 
 
 # ======================================================================
