@@ -9,7 +9,7 @@ import joblib
 from collections import deque
 from PIL import Image
 import time
-from ultralytics import YOLO 
+from ultralytics import YOLO
 
 # Thêm khai báo mp_drawing và mp_hands
 mp_drawing = mp.solutions.drawing_utils
@@ -29,7 +29,7 @@ SCALER_PATH = "scale1.pkl"
 LABEL_MAP_PATH = "label_map_6cls.json"
 SMOOTH_WINDOW = 5
 BLINK_THRESHOLD = 0.20
-N_FEATURES = 10 
+N_FEATURES = 10
 
 # --- Cấu hình Wheel (Hands) ---
 WHEEL_MODEL_PATH = "softmax_wheel_model.pkl"
@@ -152,6 +152,7 @@ def mouth_aspect_ratio(landmarks):
     return (A + B) / (2.0 * (C + EPS))
 
 def head_pose_yaw_pitch_roll(landmarks):
+    # GIỮ NGUYÊN công thức YAW gốc theo yêu cầu:
     left_eye = landmarks[33][:2]
     right_eye = landmarks[263][:2]
     nose = landmarks[1][:2]
@@ -163,6 +164,7 @@ def head_pose_yaw_pitch_roll(landmarks):
 
     interocular = np.linalg.norm(right_eye - left_eye) + EPS
     eyes_center = (left_eye + right_eye) / 2.0
+    # Yaw Dương -> Quay phải, Yaw Âm -> Quay trái
     yaw = np.degrees(np.arctan2((nose[0] - eyes_center[0]), interocular))
 
     baseline = chin - eyes_center
@@ -287,8 +289,7 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
         cv2.putText(img_bgr, "WHEEL NOT FOUND", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
         return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), "WHEEL NOT FOUND"
 
-    # 2. TRÍCH XUẤT ĐẶC TRƯNG (Sử dụng hàm 128 features mới)
-    # Không cần truyền hands_processor vì nó được tạo lại bên trong extract_wheel_features
+    # 2. TRÍCH XUẤT ĐẶC TRƯNG 
     features = extract_wheel_features(img_bgr, None, wheel_coords)
     
     final_predicted_class = "off-wheel" 
@@ -323,15 +324,16 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
             if res_for_drawing.multi_hand_landmarks:
                 for hand_landmarks in res_for_drawing.multi_hand_landmarks:
                     mp_drawing.draw_landmarks(img_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                                              mp_drawing.DrawingSpec(color=(255, 255, 0), thickness=2, circle_radius=2),
-                                              mp_drawing.DrawingSpec(color=(255, 200, 0), thickness=2, circle_radius=2))
+                                             mp_drawing.DrawingSpec(color=(255, 255, 0), thickness=2, circle_radius=2),
+                                             mp_drawing.DrawingSpec(color=(255, 200, 0), thickness=2, circle_radius=2))
 
     # 5. Vẽ Vô lăng
-    x_min, y_min, x_max, y_max = bbox_result
-    xw, yw, rw = wheel_coords
-    
-    cv2.rectangle(img_bgr, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2) # Bounding Box YOLO
-    cv2.circle(img_bgr, (xw, yw), rw, (255, 0, 255), 2) # Vòng tròn ước tính từ YOLO
+    if bbox_result is not None:
+        x_min, y_min, x_max, y_max = bbox_result
+        xw, yw, rw = wheel_coords
+        
+        cv2.rectangle(img_bgr, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2) # Bounding Box YOLO
+        cv2.circle(img_bgr, (xw, yw), rw, (255, 0, 255), 2) # Vòng tròn ước tính từ YOLO
     
     # 6. Đặt text hiển thị cuối cùng
     cv2.putText(img_bgr, text_to_display, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, final_color, 3, cv2.LINE_AA)
@@ -358,7 +360,11 @@ class DrowsinessProcessor(VideoProcessorBase):
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
-        frame_resized = cv2.resize(frame_array, (NEW_WIDTH, NEW_HEIGHT))
+        
+        # 🟢 ĐÃ SỬA: Lật ảnh ngang (flipCode = 1) để khắc phục lỗi camera ngược
+        frame_flipped = cv2.flip(frame_array, 1) 
+        
+        frame_resized = cv2.resize(frame_flipped, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
         rgb_unflipped = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
@@ -430,7 +436,7 @@ tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
-    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
+    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn. (Video đã được lật gương để không bị ngược)")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 4, 1])
@@ -462,7 +468,6 @@ with tab2:
 
     if uploaded_wheel_file is not None:
         st.info("Đang xử lý ảnh...")
-        # 🛑 ĐÃ SỬA: Truyền YOLO_MODEL vào hàm xử lý ảnh 🛑
         result_img_rgb, predicted_label = process_static_wheel_image(uploaded_wheel_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std_WHEEL, CLASS_NAMES_WHEEL, YOLO_MODEL)
         st.markdown("---")
         col_img, col_res = st.columns([2, 1])
