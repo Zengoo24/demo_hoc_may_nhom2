@@ -21,7 +21,6 @@ mp_hands = mp.solutions.hands
 
 # --- Cấu hình chung ---
 EPS = 1e-8
-# 🟢 ĐÃ SỬA: GIẢM ĐỘ PHÂN GIẢI để giảm tải CPU
 NEW_WIDTH, NEW_HEIGHT = 320, 240 
 
 # --- Cấu hình Drowsiness (Face Mesh) ---
@@ -440,7 +439,7 @@ tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng
 
 with tab1:
     st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
-    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn. (Video đã được tối ưu hóa 320x240)")
+    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 4, 1])
