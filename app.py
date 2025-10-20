@@ -21,7 +21,8 @@ mp_hands = mp.solutions.hands
 
 # --- Cấu hình chung ---
 EPS = 1e-8
-NEW_WIDTH, NEW_HEIGHT = 640, 480
+# 🟢 ĐÃ SỬA: GIẢM ĐỘ PHÂN GIẢI để giảm tải CPU
+NEW_WIDTH, NEW_HEIGHT = 320, 240 
 
 # --- Cấu hình Drowsiness (Face Mesh) ---
 MODEL_PATH = "softmax_model_best1.pkl"
@@ -74,6 +75,8 @@ def load_assets():
     """Tải tất cả tham số mô hình, scaler và label map."""
     try:
         # --- 1. Tải Mô hình Face Mesh ---
+        # Việc sử dụng st.cache_resource ở đây giúp giảm RAM TỔNG THỂ, nhưng
+        # cần kiểm tra kích thước file để đảm bảo không vượt quá giới hạn hosting.
         with open(MODEL_PATH, "rb") as f:
             model_data = joblib.load(f)
             W = model_data["W"]
@@ -152,7 +155,6 @@ def mouth_aspect_ratio(landmarks):
     return (A + B) / (2.0 * (C + EPS))
 
 def head_pose_yaw_pitch_roll(landmarks):
-    # GIỮ NGUYÊN công thức YAW gốc theo yêu cầu:
     left_eye = landmarks[33][:2]
     right_eye = landmarks[263][:2]
     nose = landmarks[1][:2]
@@ -164,7 +166,6 @@ def head_pose_yaw_pitch_roll(landmarks):
 
     interocular = np.linalg.norm(right_eye - left_eye) + EPS
     eyes_center = (left_eye + right_eye) / 2.0
-    # Yaw Dương -> Quay phải, Yaw Âm -> Quay trái
     yaw = np.degrees(np.arctan2((nose[0] - eyes_center[0]), interocular))
 
     baseline = chin - eyes_center
@@ -347,8 +348,9 @@ def process_static_wheel_image(image_file, W_WHEEL, b_WHEEL, X_mean_WHEEL, X_std
 class DrowsinessProcessor(VideoProcessorBase):
     def __init__(self):
         self.W = W; self.b = b; self.mean = mean; self.std = std; self.id2label = id2label
+        # 🟢 ĐÃ SỬA: Tắt refine_landmarks để giảm tải CPU/RAM của MediaPipe
         self.face_mesh = mp_face_mesh.FaceMesh(
-            max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+            max_num_faces=1, refine_landmarks=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
         self.pred_queue = deque(maxlen=SMOOTH_WINDOW)
         self.last_pred_label = "CHO DU LIEU VAO"
         self.N_FEATURES = N_FEATURES
@@ -361,14 +363,16 @@ class DrowsinessProcessor(VideoProcessorBase):
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         frame_array = frame.to_ndarray(format="bgr24")
         
-        # 🟢 ĐÃ SỬA: Lật ảnh ngang (flipCode = 1) để khắc phục lỗi camera ngược
+        # Thao tác lật ảnh ngang để không bị ngược (mirror effect)
         frame_flipped = cv2.flip(frame_array, 1) 
         
+        # Kích thước đã giảm (320x240)
         frame_resized = cv2.resize(frame_flipped, (NEW_WIDTH, NEW_HEIGHT))
         h, w = frame_resized.shape[:2]
 
         rgb_unflipped = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
 
+        # MediaPipe xử lý trên khung hình đã giảm kích thước
         results = self.face_mesh.process(rgb_unflipped)
         
         ear_avg = 0.0
@@ -435,8 +439,8 @@ st.set_page_config(page_title="Demo Softmax", layout="wide")
 tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng (Tay)"])
 
 with tab1:
-    st.header("1. Nhận diện các hành vi mất tập trung (Live Camera)")
-    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn.")
+    st.header("1. Nhận diện Trạng thái Khuôn mặt (Live Camera)")
+    st.warning("Vui lòng chấp nhận yêu cầu truy cập camera từ trình duyệt của bạn. (Video đã được tối ưu hóa 320x240)")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 4, 1])
