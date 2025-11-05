@@ -433,7 +433,7 @@ class DrowsinessProcessor(VideoProcessorBase):
 # ======================================================================
 # VIII. GIAO DIỆN STREAMLIT CHÍNH
 # ======================================================================
-st.set_page_config(page_title="Demo Softmax", layout="wide")
+st.set_page_config(page_title="Demo Hoc May", layout="wide")
 
 tab1, tab2 = st.tabs(["🔴 Dự đoán Live Camera", "🚗 Kiểm tra Vô Lăng (Tay)"])
 
